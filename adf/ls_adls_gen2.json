@@ -1,0 +1,8 @@
+{
+  "name": "ls_adls_gen2",
+  "properties": {
+    "type": "AzureBlobFS",
+    "typeProperties": { "url": "https://<storageaccount>.dfs.core.windows.net" },
+    "description": "ADLS Gen2 using the Data Factory managed identity"
+  }
+}

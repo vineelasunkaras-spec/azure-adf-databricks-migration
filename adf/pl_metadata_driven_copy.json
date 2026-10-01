@@ -1,0 +1,86 @@
+{
+  "name": "pl_metadata_driven_copy",
+  "properties": {
+    "parameters": { "sourceSystem": { "type": "string", "defaultValue": "ORACLE" } },
+    "activities": [
+      {
+        "name": "LookupControlTable",
+        "type": "Lookup",
+        "typeProperties": {
+          "source": { "type": "AzureSqlSource", "sqlReaderQuery": "SELECT * FROM etl.migration_control" },
+          "dataset": { "referenceName": "ds_control_table", "type": "DatasetReference" },
+          "firstRowOnly": false
+        }
+      },
+      {
+        "name": "FilterEnabled",
+        "type": "Filter",
+        "dependsOn": [{ "activity": "LookupControlTable", "dependencyConditions": ["Succeeded"] }],
+        "typeProperties": {
+          "items": { "value": "@activity('LookupControlTable').output.value", "type": "Expression" },
+          "condition": { "value": "@and(equals(item().is_enabled, true), equals(item().source_system, pipeline().parameters.sourceSystem))", "type": "Expression" }
+        }
+      },
+      {
+        "name": "ForEachTable",
+        "type": "ForEach",
+        "dependsOn": [{ "activity": "FilterEnabled", "dependencyConditions": ["Succeeded"] }],
+        "typeProperties": {
+          "items": { "value": "@activity('FilterEnabled').output.value", "type": "Expression" },
+          "isSequential": false,
+          "batchCount": 8,
+          "activities": [
+            {
+              "name": "CopyToBronze",
+              "type": "Copy",
+              "typeProperties": {
+                "source": {
+                  "type": "OracleSource",
+                  "oracleReaderQuery": {
+                    "value": "@if(equals(item().load_type,'FULL'), concat('SELECT * FROM ', item().source_schema, '.', item().source_table), concat('SELECT * FROM ', item().source_schema, '.', item().source_table, ' WHERE ', item().watermark_column, ' > TO_TIMESTAMP(''', item().last_watermark, ''', ''YYYY-MM-DD HH24:MI:SS.FF'')'))",
+                    "type": "Expression"
+                  },
+                  "partitionOption": "DynamicRange"
+                },
+                "sink": { "type": "ParquetSink" },
+                "enableStaging": false,
+                "parallelCopies": 4
+              },
+              "inputs": [{ "referenceName": "ds_oracle_table", "type": "DatasetReference" }],
+              "outputs": [{
+                "referenceName": "ds_adls_parquet",
+                "type": "DatasetReference",
+                "parameters": {
+                  "folderPath": { "value": "@concat('bronze/', toLower(item().source_system), '/', toLower(item().source_table), '/', formatDateTime(utcnow(), 'yyyy/MM/dd'))", "type": "Expression" }
+                }
+              }]
+            },
+            {
+              "name": "BronzeToSilver",
+              "type": "DatabricksNotebook",
+              "dependsOn": [{ "activity": "CopyToBronze", "dependencyConditions": ["Succeeded"] }],
+              "linkedServiceName": { "referenceName": "ls_databricks", "type": "LinkedServiceReference" },
+              "typeProperties": {
+                "notebookPath": "/Repos/data-platform/notebooks/bronze_to_silver",
+                "baseParameters": {
+                  "source_system": "@item().source_system",
+                  "table": "@item().source_table",
+                  "primary_keys": "@item().primary_keys"
+                }
+              }
+            },
+            {
+              "name": "UpdateWatermark",
+              "type": "SqlServerStoredProcedure",
+              "dependsOn": [{ "activity": "BronzeToSilver", "dependencyConditions": ["Succeeded"] }],
+              "typeProperties": {
+                "storedProcedureName": "etl.usp_update_watermark",
+                "storedProcedureParameters": { "table_id": { "value": "@item().table_id", "type": "Int32" } }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

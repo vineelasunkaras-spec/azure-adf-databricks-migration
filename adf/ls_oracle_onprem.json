@@ -1,0 +1,15 @@
+{
+  "name": "ls_oracle_onprem",
+  "properties": {
+    "type": "Oracle",
+    "connectVia": { "referenceName": "shir-onprem", "type": "IntegrationRuntimeReference" },
+    "typeProperties": {
+      "connectionString": "host=<oracle-host>;port=1521;serviceName=<service>;user id=<user>",
+      "password": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_key_vault", "type": "LinkedServiceReference" },
+        "secretName": "oracle-etl-password"
+      }
+    }
+  }
+}
